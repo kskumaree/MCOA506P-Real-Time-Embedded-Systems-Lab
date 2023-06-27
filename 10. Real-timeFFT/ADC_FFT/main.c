@@ -1,0 +1,107 @@
+#include "stm32f4xx.h"
+#define ARM_MATH_CM4
+#include "arm_math.h"
+#include "arm_const_structs.h"
+void ADC_Init(void);
+void ADC_Enable(void);
+void ADC_Start(int);
+float32_t testOutput2[1024];
+float32_t testMag2[512],value[1024],value1[1024],Frequency,maxValue;
+float32_t delF=2051/1024;//Fs/N
+uint32_t fftSize = 1024,maxIndex;
+uint32_t ifftFlag = 0,i,j;
+uint32_t doBitReverse = 1;
+uint8_t ADC_VAL[1024];
+void ADC_Init (void)
+{
+	/************** STEPS TO FOLLOW *****************
+	1. Enable ADC and GPIO clock
+	2. Set the prescalar in the Common Control Register (CCR)
+	3. Set the Resolution in the Control Register 1 (CR1)
+	4. Set the Continuous Conversion, EOC, and Data Alignment in Control Reg 2 (CR2)
+	5. Set the Sampling Time for the channels in ADC_SMPRx
+	6. Set the Regular channel sequence length in ADC_SQR1
+	7. Set the Respective GPIO PINs in the Analog Mode
+	************************************************/
+//High speed internal clock is 16MHz
+//1. Enable ADC and GPIO clock
+	RCC->APB2ENR |= (1<<8);  // enable ADC1 clock
+	RCC->AHB1ENR |= (1<<0);  // enable GPIOA clock
+	RCC->CFGR |= 6<<13; //  AHB clock divided by 8; set APB2 = 2 MHz
+
+//2. Set the pre-scalar in the Common Control Register (CCR)
+	ADC->CCR |= 0<<16;  		 //00: PCLK2 divided by 2, works at 1MHz
+
+//3. Set the Resolution in the Control Register 1 (CR1)
+	//ADC1->CR1 &= ~(1<<8);    // SCAN mode disabled, enable for multichannel use
+	ADC1->CR1 |= (2<<24);   // 8 bit RES
+
+//4. Set the Continuous Conversion, EOC, and Data Alignment in Control Reg 2 (CR2)
+		//ADC1->CR2 |= (1<<1);     // enable continuous conversion mode
+		ADC1->CR2 |= (1<<10);    // EOC after each conversion
+		ADC1->CR2 &= ~(1<<11);   // Data Alignment RIGHT
+
+
+
+
+
+
+//5. Set the Sampling Time for the channels
+	//ADC1->SMPR2 &= ~(1<<0);  // Sampling time of 3 cycles for channel 0
+	ADC1->SMPR2|=(7<<0);// 480+8cycles (number of bits)=488 cycles
+//6. Set the Regular channel sequence length in ADC_SQR1
+	//ADC1->SQR1 &= ~(1<<20);   // SQR1_L =0 for 1 conversion
+
+//7. Set the Respective GPIO PIN in the Analog Mode
+	GPIOA->MODER |= (3<<0);  // analog mode for PA 0 (channel 0)
+
+}
+void msDelay(uint32_t msTime)
+{
+	/* For loop takes 4 clock cycles to get executed. Clock frequency of stm32f407 by default is 16MHz
+	So, 16MHz/4=4MHz. If we want 1000ms delay, 4MHz/1000=4000, so we have to multiply by 4000 to get a delay of 1s
+	*/
+	for(uint32_t i=0;i<msTime*3000;i++)
+	{
+		__NOP();
+	}
+
+}
+
+int main ()
+{
+
+	ADC_Init ();
+	ADC1->CR2 |= 1<<0;   // ADON =1 enable ADC1
+	uint32_t delay = 10000;
+	while (delay--);//Wait sometime for ADC to start
+	arm_rfft_fast_instance_f32 S2;
+	arm_rfft_fast_init_f32(&S2,1024);
+
+	while (1)
+	{
+
+		for(i=0;i<1024;i++)
+		{
+			ADC1->CR2 |= (1<<30);  // start the conversion
+			ADC1->SR = 0;        // clear the status register
+			//ADC1->CR2 |= (1<<30);  // start the conversion
+			while (!(ADC1->SR & (1<<1)));  // wait for EOC flag to set
+			ADC_VAL[i]=ADC1->DR;
+		}
+		for(j=0;j<1024;j++)
+				{
+					value1[j]=ADC_VAL[j];
+				}
+
+		for(j=0;j<1024;j++)
+		{
+			value[j]=ADC_VAL[j];
+		}
+		arm_rfft_fast_f32	(&S2,value,testOutput2,ifftFlag);
+		arm_cmplx_mag_f32(testOutput2, testMag2, fftSize);
+		arm_max_f32(testMag2+1, 511, &maxValue, &maxIndex);
+		Frequency=delF*(maxIndex+1);
+	}
+
+}
